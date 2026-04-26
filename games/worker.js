@@ -22,7 +22,7 @@ self.onmessage = function(e) {
     for (let b = 0; b < batchSize; b = (b + 1) | 0) {
         GRID.fill(0);
         
-        let s = isRandom ? BigInt((Math.random() * 1e18) | 0) : current;
+        let s = isRandom ? BigInt((Math.random() * 1e15) | 0) : current;
         let bombsPlaced = 0;
 
         // BOMB PLACEMENT
