@@ -1,100 +1,126 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>8seed - Pure Random Turbo</title>
+    <title>God Tile Finder</title>
     <style>
-        body { font-family: sans-serif; background: #121212; color: #e0e0e0; padding: 20px; }
-        .container { max-width: 900px; margin: 0 auto; background: #1e1e1e; padding: 25px; border-radius: 12px; border: 1px solid #333; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px; }
-        .card { background: #252525; padding: 10px; border-radius: 6px; border: 1px solid #444; }
-        label { display: block; font-size: 12px; color: #888; margin-bottom: 5px; text-transform: uppercase; }
-        input { width: 90%; background: #111; border: 1px solid #555; color: #fff; padding: 8px; border-radius: 4px; }
-        button { width: 100%; padding: 15px; font-weight: bold; cursor: pointer; border-radius: 6px; border: none; }
-        .btn-start { background: #00c853; color: #000; }
-        .btn-stop { background: #ff1744; color: #fff; }
-        .stats-bar { display: flex; justify-content: space-between; background: #000; padding: 15px; border-radius: 8px; margin: 20px 0; font-family: monospace; font-size: 1.2em; border-left: 4px solid #00c853; }
-        .log { height: 400px; overflow-y: auto; background: #080808; border: 1px solid #333; padding: 10px; font-family: monospace; font-size: 13px; }
-        .entry { color: #00e676; border-bottom: 1px solid #222; padding: 6px 0; display: flex; justify-content: space-between; }
+        body { font-family: sans-serif; background: #121212; color: #fff; padding: 20px; }
+        #list { height: 450px; overflow-y: auto; background: #000; border: 1px solid #444; padding: 15px; margin-top: 10px; }
+        .controls { background: #222; padding: 20px; border-radius: 8px; border: 1px solid #333; }
+        .setting-group { display: inline-block; margin-right: 20px; margin-bottom: 12px; vertical-align: middle; }
+        .entry { padding: 8px 0; border-bottom: 1px solid #222; cursor: pointer; font-size: 0.95em; }
+        .entry:hover { background: #1a1a1a; }
+        .seed-num { color: #ffcc00; font-weight: bold; margin-right: 25px; display: inline-block; min-width: 160px; }
+        .coords { color: #00ffcc; font-family: monospace; }
+        #stats-container { margin-top: 12px; font-size: 0.85em; color: #888; }
+        button { padding: 8px 18px; background: #444; color: white; border: 1px solid #555; cursor: pointer; font-weight: bold; }
+        button:hover { background: #555; }
+        #toggleBtn.active { background: #800; border-color: #a00; }
+        input, select { background: #000; color: #fff; border: 1px solid #444; padding: 4px; border-radius: 3px; }
     </style>
 </head>
 <body>
-
-<div class="container">
-    <h2 style="margin-top:0; color:#00c853;">8seed Pure Random <small style="color:#666">i7-6700 Optimized</small></h2>
-    
-    <div class="grid">
-        <div class="card"><label>Min God Tiles</label><input type="number" id="minGod" value="2"></div>
-        <div class="card"><label>Target XY (5,5)</label><input type="text" id="targetXY" placeholder="Any"></div>
-        <div class="card"><label>Threads</label><input type="number" id="threads" value="7"></div>
-        <div class="card"><label>Batch Size</label><input type="number" id="batchSize" value="25000"></div>
+    <h1>God Tile Finder</h1>
+    <div class="controls">
+        <div class="setting-group">
+            Diff: <select id="diff"><option value="21">Master (21)</option><option value="15">Hard (15)</option></select>
+        </div>
+        <div class="setting-group">
+            Start Seed: <input type="number" id="startSeed" value="100000000000000">
+        </div>
+        <div class="setting-group">
+            Threads: <input type="number" id="threads" value="12" style="width: 45px;">
+        </div>
+        <div class="setting-group">
+            Batch: <input type="number" id="batchSize" value="10000" style="width: 75px;">
+        </div>
+        <div class="setting-group">
+            Min God: <input type="number" id="minMatches" value="4" min="1" max="5" style="width: 40px;">
+        </div>
+        <div class="setting-group">
+            Target [X,Y]: <input type="text" id="targetCoord" placeholder="5,5" style="width: 65px;">
+        </div>
+        <br>
+        <div class="setting-group">
+            <input type="checkbox" id="random"> <label for="random">Random Mode</label>
+        </div>
+        <div class="setting-group">
+            <input type="checkbox" id="audio" checked> <label for="audio">Audio Cue</label>
+        </div>
+        <button id="toggleBtn" onclick="toggle()">Start Search</button>
+        <button onclick="resetList()">Clear</button>
+        <div id="stats-container">
+            <span id="stats">Seeds scanned: 0</span> | <span id="speed">Speed: 0/s</span>
+        </div>
     </div>
+    <div id="list"></div>
 
-    <button id="mainBtn" class="btn-start" onclick="toggle()">START PURE RANDOM SEARCH</button>
+    <script>
+        let workers = [];
+        let running = false;
+        let totalScanned = 0;
+        let startTime = Date.now();
+        const alertSnd = new Audio('https://cdn.pixabay.com/download/audio/2025/06/02/audio_a1fabf1d84.mp3');
 
-    <div class="stats-bar">
-        <span>SEEDS: <span id="statSeeds" style="color:#00c853">0</span></span>
-        <span>SPEED: <span id="statSpeed">0</span>/s</span>
-        <span>FOUND: <span id="statFound" style="color:#00c853">0</span></span>
-    </div>
+        function toggle() {
+            running = !running;
+            const btn = document.getElementById("toggleBtn");
+            btn.innerText = running ? "Stop Search" : "Start Search";
+            btn.className = running ? "active" : "";
 
-    <div class="log" id="log"></div>
-</div>
-
-<script>
-    let workers = [];
-    let running = false;
-    let seedsChecked = 0;
-    let found = 0;
-    let startT = 0;
-
-    function toggle() {
-        const btn = document.getElementById('mainBtn');
-        if (running) {
-            workers.forEach(w => w.terminate());
-            workers = [];
-            running = false;
-            btn.innerText = "START PURE RANDOM SEARCH";
-            btn.className = "btn-start";
-            return;
-        }
-
-        running = true;
-        btn.innerText = "STOP SEARCHING";
-        btn.className = "btn-stop";
-        
-        seedsChecked = 0;
-        found = 0;
-        startT = Date.now();
-        document.getElementById('log').innerHTML = "";
-
-        const threadCount = parseInt(document.getElementById('threads').value);
-        const batchSize = parseInt(document.getElementById('batchSize').value);
-        const minGod = parseInt(document.getElementById('minGod').value);
-        const target = document.getElementById('targetXY').value;
-
-        for (let i = 0; i < threadCount; i++) {
-            const w = new Worker('worker.js');
-            w.onmessage = (e) => {
-                if (e.data.type === 'stat') {
-                    seedsChecked += e.data.count;
-                    const sec = (Date.now() - startT) / 1000;
-                    document.getElementById('statSeeds').innerText = seedsChecked.toLocaleString();
-                    document.getElementById('statSpeed').innerText = Math.floor(seedsChecked / sec).toLocaleString();
-                } else if (e.data.type === 'found') {
-                    found++;
-                    document.getElementById('statFound').innerText = found;
-                    const div = document.createElement('div');
-                    div.className = 'entry';
-                    div.innerHTML = `<span>SEED: ${e.data.seed}</span> <span>${e.data.coords.join(' | ')}</span>`;
-                    const log = document.getElementById('log');
-                    log.insertBefore(div, log.firstChild);
+            if (running) {
+                startTime = Date.now();
+                const threadCount = parseInt(document.getElementById("threads").value);
+                const startSeed = BigInt(document.getElementById("startSeed").value);
+                
+                for (let i = 0; i < threadCount; i++) {
+                    let w = new Worker('worker.js');
+                    w.onmessage = onMessage;
+                    w.postMessage({
+                        startSeed: startSeed + BigInt(i),
+                        step: BigInt(threadCount),
+                        bombCount: parseInt(document.getElementById("diff").value),
+                        minMatches: parseInt(document.getElementById("minMatches").value),
+                        targetCoord: document.getElementById('targetCoord').value.trim(),
+                        isRandom: document.getElementById("random").checked,
+                        batchSize: parseInt(document.getElementById("batchSize").value)
+                    });
+                    workers.push(w);
                 }
-            };
-            w.postMessage({ bombCount: 21, minMatches: minGod, targetCoord: target, batchSize: batchSize });
-            workers.push(w);
+            } else {
+                workers.forEach(w => w.terminate());
+                workers = [];
+            }
         }
-    }
-</script>
+
+        function onMessage(e) {
+            if (!running) return;
+            if (e.data.type === 'stat') {
+                totalScanned += e.data.count;
+                const elapsed = (Date.now() - startTime) / 1000;
+                document.getElementById('stats').innerText = `Seeds scanned: ${totalScanned.toLocaleString()}`;
+                document.getElementById('speed').innerText = `Speed: ${Math.floor(totalScanned / (elapsed || 1)).toLocaleString()}/s`;
+                if (!document.getElementById("random").checked) {
+                    document.getElementById("startSeed").value = e.data.nextSeed;
+                }
+                e.target.postMessage(e.data.nextMsg);
+            } else if (e.data.type === 'found') {
+                if (document.getElementById('audio').checked) alertSnd.play().catch(()=>{});
+                const list = document.getElementById('list');
+                const item = document.createElement('div');
+                item.className = 'entry';
+                // Explicitly labeling as X, Y to avoid confusion
+                item.innerHTML = `<span class="seed-num">${e.data.seed}</span> <span class="coords">Coords [X,Y]: ${e.data.coords.join(' | ')}</span>`;
+                item.onclick = () => { navigator.clipboard.writeText(e.data.seed); };
+                list.prepend(item);
+                if (list.children.length > 100) list.removeChild(list.lastChild);
+            }
+        }
+
+        function resetList() {
+            document.getElementById('list').innerHTML = '';
+            totalScanned = 0;
+            startTime = Date.now();
+        }
+    </script>
 </body>
 </html>
