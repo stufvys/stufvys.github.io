@@ -1,8 +1,10 @@
-const GRID = new Uint8Array(100);
-const FOUND_BUF = new Uint8Array(100);
+// Pre-allocate everything to avoid Garbage Collection during the loop
+const GRID = new Int32Array(100); 
+const COUNTS = new Int32Array(100);
+const FOUND_BUF = new Int32Array(100);
 
 self.onmessage = function(e) {
-    const { bombCount, minMatches, targetCoord, batchSize } = e.data;
+    const { startSeed, step, bombCount, minMatches, targetCoord, isRandom, batchSize } = e.data;
     
     let tx = -1, ty = -1;
     if (targetCoord && targetCoord.includes(',')) {
@@ -11,63 +13,75 @@ self.onmessage = function(e) {
         ty = parseInt(parts[1]) | 0;
     }
 
-    // Your specific pRNG constants
-    const multiplier = 2862933555777941757n;
-    const increment = 3037000493n;
-    const mask = 0xFFFFFFFFFFFFFFFFn;
-    const divisor = 9007199254740992; // 2^53
+    // Convert startSeed to a Number. 15 digits fits in a JS double safely.
+    let current = Number(startSeed);
+    const stepNum = Number(step);
 
-    // Infinite loop processing - only stops when terminated
-    while (true) {
-        for (let b = 0; b < batchSize; b = (b + 1) | 0) {
-            GRID.fill(0);
+    for (let b = 0; b < batchSize; b = (b + 1) | 0) {
+        GRID.fill(0);
+        COUNTS.fill(0);
+        
+        let s = isRandom ? (Math.random() * 1e15) | 0 : current;
+        let bombsPlaced = 0;
+
+        // BOMB PLACEMENT + NEIGHBOR TRACKING
+        while (bombsPlaced < bombCount) {
+            // High-speed LCG math using standard Numbers
+            s = (s * 16807) % 2147483647;
+            const x = ((s / 2147483647) * 10) | 0;
             
-            // Generate a fresh random starting seed for EVERY board
-            const currentSeedNum = Math.floor(Math.random() * 1e15);
-            let state = BigInt(currentSeedNum);
+            s = (s * 16807) % 2147483647;
+            const y = ((s / 2147483647) * 10) | 0;
             
-            let bombsPlaced = 0;
-            while (bombsPlaced < bombCount) {
-                state = (state * multiplier + increment) & mask;
-                const x = ((Number(state >> 11n) / divisor) * 10) | 0;
-                
-                state = (state * multiplier + increment) & mask;
-                const y = ((Number(state >> 11n) / divisor) * 10) | 0;
-                
-                const idx = (y * 10 + x) | 0;
-                if (GRID[idx] === 0) {
-                    GRID[idx] = 1;
-                    bombsPlaced = (bombsPlaced + 1) | 0;
+            const idx = (y * 10 + x) | 0;
+            if (GRID[idx] === 0) {
+                GRID[idx] = 1;
+                bombsPlaced = (bombsPlaced + 1) | 0;
+
+                // Update neighbor counts immediately for every bomb placed
+                const xStart = x > 0 ? x - 1 : 0;
+                const xEnd = x < 9 ? x + 1 : 9;
+                const yStart = y > 0 ? y - 1 : 0;
+                const yEnd = y < 9 ? y + 1 : 9;
+
+                for (let ny = yStart; ny <= yEnd; ny = (ny + 1) | 0) {
+                    for (let nx = xStart; nx <= xEnd; nx = (nx + 1) | 0) {
+                        const nIdx = (ny * 10 + nx) | 0;
+                        COUNTS[nIdx] = (COUNTS[nIdx] + 1) | 0;
+                    }
                 }
-            }
-
-            let foundCount = 0;
-            let targetMet = (tx === -1);
-            for (let i = 0; i < 100; i = (i + 1) | 0) {
-                if (GRID[i]) continue;
-                const x = i % 10 | 0;
-                const y = (i / 10) | 0;
-                let n = 0;
-                if (x > 0) { n += GRID[i-1]; if (y > 0) n += GRID[i-11]; if (y < 9) n += GRID[i+9]; }
-                if (x < 9) { n += GRID[i+1]; if (y > 0) n += GRID[i-9]; if (y < 9) n += GRID[i+11]; }
-                if (y > 0) n += GRID[i-10]; if (y < 9) n += GRID[i+10];
-
-                if (n === 8) {
-                    FOUND_BUF[foundCount++] = i;
-                    if (x === tx && y === ty) targetMet = true;
-                }
-            }
-
-            if (foundCount >= minMatches && targetMet) {
-                self.postMessage({ 
-                    type: 'found',
-                    seed: currentSeedNum.toString(), 
-                    coords: Array.from(FOUND_BUF.slice(0, foundCount)).map(i => `${i%10},${(i/10)|0}`)
-                });
             }
         }
-        
-        // Report stats after every batch
-        self.postMessage({ type: 'stat', count: batchSize });
+
+        // FIND GOD TILES (Value will be 8 and GRID[i] will be 0)
+        let foundCount = 0;
+        let targetMet = (tx === -1);
+
+        for (let i = 0; i < 100; i = (i + 1) | 0) {
+            if (GRID[i] === 0 && COUNTS[i] === 8) {
+                FOUND_BUF[foundCount++] = i;
+                if ((i % 10 | 0) === tx && ((i / 10) | 0) === ty) targetMet = true;
+            }
+        }
+
+        if (foundCount >= minMatches && targetMet) {
+            const coords = [];
+            for(let j = 0; j < foundCount; j++) {
+                coords.push((FOUND_BUF[j] % 10) + "," + ((FOUND_BUF[j] / 10) | 0));
+            }
+            self.postMessage({ 
+                type: 'found',
+                seed: s.toString(), 
+                coords: coords 
+            });
+        }
+        current += stepNum;
     }
+
+    self.postMessage({
+        type: 'stat',
+        count: batchSize,
+        nextSeed: current.toString(),
+        nextMsg: { startSeed: current, step, bombCount, minMatches, targetCoord, isRandom, batchSize }
+    });
 };
