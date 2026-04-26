@@ -1,11 +1,11 @@
-// Pre-allocate everything to avoid Garbage Collection during the loop
-const GRID = new Int32Array(100); 
-const COUNTS = new Int32Array(100);
-const FOUND_BUF = new Int32Array(100);
+// Pre-allocate memory outside the loop to prevent Garbage Collection lag
+const GRID = new Uint8Array(100);
+const FOUND_BUF = new Uint8Array(100); 
 
 self.onmessage = function(e) {
     const { startSeed, step, bombCount, minMatches, targetCoord, isRandom, batchSize } = e.data;
     
+    // Parse targetCoord once
     let tx = -1, ty = -1;
     if (targetCoord && targetCoord.includes(',')) {
         const parts = targetCoord.split(',');
@@ -13,57 +13,64 @@ self.onmessage = function(e) {
         ty = parseInt(parts[1]) | 0;
     }
 
-    // Convert startSeed to a Number. 15 digits fits in a JS double safely.
-    let current = Number(startSeed);
-    const stepNum = Number(step);
+    let current = BigInt(startSeed);
+    const multiplier = 6364136223846793005n;
+    const increment = 1442695040888963407n;
 
     for (let b = 0; b < batchSize; b = (b + 1) | 0) {
+        // Fast clear
         GRID.fill(0);
-        COUNTS.fill(0);
         
-        let s = isRandom ? (Math.random() * 1e15) | 0 : current;
+        let seedToUse = isRandom ? 
+            BigInt((Math.random() * 1e15) | 0) : 
+            current;
+            
+        let s = seedToUse; 
         let bombsPlaced = 0;
 
-        // BOMB PLACEMENT + NEIGHBOR TRACKING
+        // BOMB PLACEMENT
         while (bombsPlaced < bombCount) {
-            // High-speed LCG math using standard Numbers
-            s = (s * 16807) % 2147483647;
-            const x = ((s / 2147483647) * 10) | 0;
-            
-            s = (s * 16807) % 2147483647;
-            const y = ((s / 2147483647) * 10) | 0;
+            // X
+            s = (s * multiplier + increment) & 0xFFFFFFFFFFFFFFFFn;
+            const x = Number((Number(s >> 11n) / 9007199254740992) * 10) | 0;
+            // Y
+            s = (s * multiplier + increment) & 0xFFFFFFFFFFFFFFFFn;
+            const y = Number((Number(s >> 11n) / 9007199254740992) * 10) | 0;
             
             const idx = (y * 10 + x) | 0;
             if (GRID[idx] === 0) {
                 GRID[idx] = 1;
                 bombsPlaced = (bombsPlaced + 1) | 0;
-
-                // Update neighbor counts immediately for every bomb placed
-                const xStart = x > 0 ? x - 1 : 0;
-                const xEnd = x < 9 ? x + 1 : 9;
-                const yStart = y > 0 ? y - 1 : 0;
-                const yEnd = y < 9 ? y + 1 : 9;
-
-                for (let ny = yStart; ny <= yEnd; ny = (ny + 1) | 0) {
-                    for (let nx = xStart; nx <= xEnd; nx = (nx + 1) | 0) {
-                        const nIdx = (ny * 10 + nx) | 0;
-                        COUNTS[nIdx] = (COUNTS[nIdx] + 1) | 0;
-                    }
-                }
             }
         }
 
-        // FIND GOD TILES (Value will be 8 and GRID[i] will be 0)
+        // NEIGHBOR SCAN
         let foundCount = 0;
         let targetMet = (tx === -1);
 
         for (let i = 0; i < 100; i = (i + 1) | 0) {
-            if (GRID[i] === 0 && COUNTS[i] === 8) {
+            if (GRID[i]) continue;
+            
+            const x = i % 10 | 0;
+            const y = (i / 10) | 0;
+            let neighbors = 0;
+
+            // Tight neighbor check
+            if (x > 0) {
+                neighbors += GRID[i - 1] + (y > 0 ? GRID[i - 11] : 0) + (y < 9 ? GRID[i + 9] : 0);
+            }
+            if (x < 9) {
+                neighbors += GRID[i + 1] + (y > 0 ? GRID[i - 9] : 0) + (y < 9 ? GRID[i + 11] : 0);
+            }
+            neighbors += (y > 0 ? GRID[i - 10] : 0) + (y < 9 ? GRID[i + 10] : 0);
+
+            if (neighbors === 8) {
                 FOUND_BUF[foundCount++] = i;
-                if ((i % 10 | 0) === tx && ((i / 10) | 0) === ty) targetMet = true;
+                if (x === tx && y === ty) targetMet = true;
             }
         }
 
+        // Only do expensive string/array work if we actually found a winner
         if (foundCount >= minMatches && targetMet) {
             const coords = [];
             for(let j = 0; j < foundCount; j++) {
@@ -71,11 +78,11 @@ self.onmessage = function(e) {
             }
             self.postMessage({ 
                 type: 'found',
-                seed: s.toString(), 
+                seed: seedToUse.toString(), 
                 coords: coords 
             });
         }
-        current += stepNum;
+        current += step;
     }
 
     self.postMessage({
