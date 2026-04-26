@@ -1,9 +1,11 @@
+// Pre-allocate buffers to prevent Garbage Collection pauses
 const GRID = new Uint8Array(100);
 const FOUND_BUF = new Uint8Array(100);
 
 self.onmessage = function(e) {
     const { startSeed, step, bombCount, minMatches, targetCoord, isRandom, batchSize } = e.data;
     
+    // Parse target coordinate once
     let tx = -1, ty = -1;
     if (targetCoord && targetCoord.includes(',')) {
         const parts = targetCoord.split(',');
@@ -11,29 +13,33 @@ self.onmessage = function(e) {
         ty = parseInt(parts[1]) | 0;
     }
 
-    let current = BigInt(startSeed);
-    const stepBI = BigInt(step);
-    
-    // PCG/LCG Constants for 64-bit math
-    const multiplier = 6364136223846793005n;
-    const increment = 1442695040888963407n;
-    const divisor = 18446744073709551616n; // 2^64
+    let currentSeedValue = Number(startSeed); 
+    const stepNum = Number(step);
+
+    // LCG Constants from your snippet
+    const multiplier = 2862933555777941757n;
+    const increment = 3037000493n;
+    const mask = 0xFFFFFFFFFFFFFFFFn;
+    const divisor = 9007199254740992; // 2^53
 
     for (let b = 0; b < batchSize; b = (b + 1) | 0) {
         GRID.fill(0);
         
-        let s = isRandom ? BigInt((Math.random() * 1e15) | 0) : current;
+        // Use provided seed or generate random 15-digit
+        let seedToUse = isRandom ? (Math.random() * 1e15) : currentSeedValue;
+        let state = BigInt(Math.floor(seedToUse));
+        
         let bombsPlaced = 0;
 
-        // BOMB PLACEMENT
+        // BOMB PLACEMENT LOOP
         while (bombsPlaced < bombCount) {
             // Generate X
-            s = (s * multiplier + increment) & 0xFFFFFFFFFFFFFFFFn;
-            const x = Number((s * 10n) / divisor) | 0;
+            state = (state * multiplier + increment) & mask;
+            const x = ((Number(state >> 11n) / divisor) * 10) | 0;
             
             // Generate Y
-            s = (s * multiplier + increment) & 0xFFFFFFFFFFFFFFFFn;
-            const y = Number((s * 10n) / divisor) | 0;
+            state = (state * multiplier + increment) & mask;
+            const y = ((Number(state >> 11n) / divisor) * 10) | 0;
             
             const idx = (y * 10 + x) | 0;
             if (GRID[idx] === 0) {
@@ -42,7 +48,7 @@ self.onmessage = function(e) {
             }
         }
 
-        // NEIGHBOR SCAN
+        // NEIGHBOR SCAN (Optimized manual check)
         let foundCount = 0;
         let targetMet = (tx === -1);
 
@@ -53,7 +59,6 @@ self.onmessage = function(e) {
             const y = (i / 10) | 0;
             let n = 0;
 
-            // Manual check is faster than nested loops for 10x10
             if (x > 0) {
                 n += GRID[i - 1];
                 if (y > 0) n += GRID[i - 11];
@@ -73,24 +78,25 @@ self.onmessage = function(e) {
             }
         }
 
+        // Output Result
         if (foundCount >= minMatches && targetMet) {
             const coords = [];
-            for(let j = 0; j < foundCount; j++) {
+            for(let j = 0; j < foundCount; j = (j + 1) | 0) {
                 coords.push((FOUND_BUF[j] % 10) + "," + ((FOUND_BUF[j] / 10) | 0));
             }
             self.postMessage({ 
                 type: 'found',
-                seed: current.toString(), 
+                seed: seedToUse.toString(), 
                 coords: coords 
             });
         }
-        current += stepBI;
+        currentSeedValue += stepNum;
     }
 
+    // Update stats
     self.postMessage({
         type: 'stat',
         count: batchSize,
-        nextSeed: current.toString(),
-        nextMsg: { startSeed: current.toString(), step, bombCount, minMatches, targetCoord, isRandom, batchSize }
+        nextSeed: currentSeedValue.toString()
     });
 };
