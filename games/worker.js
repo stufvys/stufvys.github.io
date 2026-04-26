@@ -11,29 +11,29 @@ self.onmessage = function(e) {
         ty = parseInt(parts[1]) | 0;
     }
 
-    // LCG Constants
+    // Constants from your specific pRNG function
     const multiplier = 2862933555777941757n;
     const increment = 3037000493n;
     const mask = 0xFFFFFFFFFFFFFFFFn;
     const divisor = 9007199254740992; // 2^53
 
-    // Initialize current seed
-    let currentSeedValue = isRandom ? BigInt(Math.floor(Math.random() * 1e15)) : BigInt(startSeed);
+    // Ensure we start with a clean BigInt
+    let currentSeed = BigInt(startSeed);
     const stepBI = BigInt(step);
 
     for (let b = 0; b < batchSize; b = (b + 1) | 0) {
         GRID.fill(0);
         
-        let state = currentSeedValue;
+        // This follows your pRNG logic: Force to 15-digit precision
+        let state = currentSeed;
         let bombsPlaced = 0;
 
-        // BOMB PLACEMENT
         while (bombsPlaced < bombCount) {
-            // X
+            // Generate X
             state = (state * multiplier + increment) & mask;
             const x = ((Number(state >> 11n) / divisor) * 10) | 0;
             
-            // Y
+            // Generate Y
             state = (state * multiplier + increment) & mask;
             const y = ((Number(state >> 11n) / divisor) * 10) | 0;
             
@@ -44,28 +44,17 @@ self.onmessage = function(e) {
             }
         }
 
-        // NEIGHBOR SCAN
+        // Neighbor check
         let foundCount = 0;
         let targetMet = (tx === -1);
-
         for (let i = 0; i < 100; i = (i + 1) | 0) {
             if (GRID[i]) continue;
             const x = i % 10 | 0;
             const y = (i / 10) | 0;
             let n = 0;
-
-            if (x > 0) {
-                n += GRID[i - 1];
-                if (y > 0) n += GRID[i - 11];
-                if (y < 9) n += GRID[i + 9];
-            }
-            if (x < 9) {
-                n += GRID[i + 1];
-                if (y > 0) n += GRID[i - 9];
-                if (y < 9) n += GRID[i + 11];
-            }
-            if (y > 0) n += GRID[i - 10];
-            if (y < 9) n += GRID[i + 10];
+            if (x > 0) { n += GRID[i-1]; if (y > 0) n += GRID[i-11]; if (y < 9) n += GRID[i+9]; }
+            if (x < 9) { n += GRID[i+1]; if (y > 0) n += GRID[i-9]; if (y < 9) n += GRID[i+11]; }
+            if (y > 0) n += GRID[i-10]; if (y < 9) n += GRID[i+10];
 
             if (n === 8) {
                 FOUND_BUF[foundCount++] = i;
@@ -76,23 +65,18 @@ self.onmessage = function(e) {
         if (foundCount >= minMatches && targetMet) {
             self.postMessage({ 
                 type: 'found',
-                seed: currentSeedValue.toString(), 
+                seed: currentSeed.toString(), 
                 coords: Array.from(FOUND_BUF.slice(0, foundCount)).map(i => `${i%10},${(i/10)|0}`)
             });
         }
 
-        // Increment for next board
-        if (isRandom) {
-            // If random, we just jump to a totally new state for the next board in the batch
-            currentSeedValue = (currentSeedValue * multiplier + increment) & mask;
-        } else {
-            currentSeedValue += stepBI;
-        }
+        // Increment seed (works for both sequential and random start)
+        currentSeed += stepBI;
     }
 
     self.postMessage({
         type: 'stat',
         count: batchSize,
-        nextSeed: currentSeedValue.toString()
+        nextSeed: currentSeed.toString()
     });
 };
